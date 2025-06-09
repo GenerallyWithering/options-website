@@ -132,20 +132,63 @@ def compute_break_even_points(S_range, payoff_array):
             break_evens.append(S_range[i - 1])
     return sorted(set(round(be, 2) for be in break_evens))
 
+def compute_break_evens_exact(legs):
+    import sympy as sp
+
+    S = sp.Symbol('S', real=True)
+    strike_points = sorted(set(leg['strike'] for leg in legs))
+    extended_points = [0] + strike_points + [strike_points[-1] + 100]
+
+    break_evens = []
+
+    for i in range(1, len(extended_points)):
+        left = extended_points[i - 1]
+        right = extended_points[i]
+
+        total_payoff = 0
+        skip_interval = False
+
+        for leg in legs:
+            K = leg['strike']
+            premium = leg['premium']
+            pos = 1 if leg['position'].lower() == 'long' else -1
+            otype = leg['type'].lower()
+
+            if otype == 'call':
+                if right <= K:
+                    payoff_expr = -premium
+                elif left >= K:
+                    payoff_expr = (S - K - premium)
+                else:
+                    skip_interval = True
+                    break
+            elif otype == 'put':
+                if left >= K:
+                    payoff_expr = -premium
+                elif right <= K:
+                    payoff_expr = (K - S - premium)
+                else:
+                    skip_interval = True
+                    break
+            else:
+                raise ValueError(f"Unknown option type: {otype}")
+
+            total_payoff += pos * payoff_expr
+
+        if skip_interval:
+            continue
+
+        solution = sp.solve(total_payoff, S)
+        for sol in solution:
+            if sol.is_real and left <= sol <= right:
+                break_evens.append(float(sol.evalf()))
+
+    return sorted(set(round(be, 2) for be in break_evens))
+
 def compute_normal_break_even(S_range, legs):
     if not legs:
         return []
-
-    # Final expiration for all legs
-    max_expiry = max(leg['expiration'] for leg in legs)
-    dte = (max_expiry - datetime.date.today()).days
-
-    payoff = np.array([
-        total_payoff_at_spot_and_time(S, legs, dte)
-        for S in S_range
-    ])
-
-    return compute_break_even_points(S_range, payoff)
+    return compute_break_evens_exact(legs)
 
 # ---------- Prebuilt Strategies ----------
 def long_straddle(spot, expiry):
@@ -419,9 +462,9 @@ with st.form("Add Leg"):
 if st.session_state.legs:
     net_debit_credit = calculate_net_debit_credit(st.session_state.legs)
     if net_debit_credit > 0:
-        st.success(f"Net Credit Received: ${net_debit_credit:.2f}")
+        st.success(f"Net Credit Received: ${net_debit_credit*100:.2f}")
     elif net_debit_credit < 0:
-        st.error(f"Net Debit Paid: ${-net_debit_credit:.2f}")
+        st.error(f"Net Debit Paid: ${-net_debit_credit*100:.2f}")
     else:
         st.info("Net Debit/Credit: $0.00 (Break-even)")
 
