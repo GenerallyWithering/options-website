@@ -94,20 +94,6 @@ def call_payoff(S, K, premium):
 def put_payoff(S, K, premium):
     return np.maximum(K - S, 0) - premium
 
-def option_payoff_at_expiry(S, leg):
-    K = leg['strike']
-    pos = 1 if leg['position'] == 'Long' else -1
-    opt_type = leg['type']
-    contracts = leg.get('contracts', 1)
-    multiplier = contracts * 100  # 1 contract = 100 shares
-
-    if opt_type == 'Call':
-        intrinsic = max(S - K, 0)
-    else:  # Put
-        intrinsic = max(K - S, 0)
-
-    return pos * intrinsic * multiplier
-
 def compute_total_payoff(spot, legs, as_of_date, S_range, r=0.01):
     payoffs = []
     for S in S_range:
@@ -133,35 +119,26 @@ def compute_total_payoff(spot, legs, as_of_date, S_range, r=0.01):
         payoffs.append(total)
     return payoffs
 
-def compute_break_even_points(S_range, payoff_array, tol=1e-5):
+def compute_break_even_points(S_range, payoff_array):
     break_evens = []
     for i in range(1, len(S_range)):
         y1, y2 = payoff_array[i - 1], payoff_array[i]
-        x1, x2 = S_range[i - 1], S_range[i]
-
-        if abs(y1) < tol:
-            break_evens.append(x1)
-        elif abs(y2) < tol:
-            break_evens.append(x2)
-        elif y1 * y2 < 0:
-            # Linear interpolation to estimate the zero-crossing
+        if y1 * y2 < 0:
+            x1, x2 = S_range[i - 1], S_range[i]
             slope = (y2 - y1) / (x2 - x1)
             x_cross = x1 - y1 / slope
             break_evens.append(x_cross)
-
-    # Round and deduplicate
+        elif y1 == 0:
+            break_evens.append(S_range[i - 1])
     return sorted(set(round(be, 2) for be in break_evens))
 
 def compute_normal_break_even(S_range, legs):
     if not legs:
         return []
 
+    # Final expiration for all legs
     max_expiry = max(leg['expiration'] for leg in legs)
     dte = (max_expiry - datetime.date.today()).days
-
-    # Ensure S_range is dense enough
-    if len(S_range) < 100:
-        print("Warning: S_range might be too sparse to detect BEs accurately.")
 
     payoff = np.array([
         total_payoff_at_spot_and_time(S, legs, dte)
@@ -169,9 +146,6 @@ def compute_normal_break_even(S_range, legs):
     ])
 
     return compute_break_even_points(S_range, payoff)
-
-
-
 
 # ---------- Prebuilt Strategies ----------
 def long_straddle(spot, expiry):
@@ -620,6 +594,8 @@ max_profit, max_loss = analyze_strategy_bounds(legs_to_analyze)
 def format_bound(val):
     return "Unlimited" if val is None else f"${val:.2f}"
 
+strategy_payoffs = {}
+
 if st.session_state.legs or (selected_strategy != "None"):
     all_expirations = []
     if st.session_state.legs:
@@ -645,13 +621,14 @@ if st.session_state.legs or (selected_strategy != "None"):
         show_today_break_even = st.checkbox("Show today's break-even points", value=True)
 
     # --- Setup ---
-
     def days_to_expiry(leg):
         return max((leg['expiration'] - payoff_date).days, 0)
 
     S_min = max(0, spot_price * 0.5)
     S_max = spot_price * 1.5
     S_range = np.linspace(S_min, S_max, 1000)
+
+    total_payoff = np.zeros_like(S_range)
 
     strategy_colors = ['blue', 'orange', 'green', 'purple', 'brown', 'cyan', 'magenta']
     leg_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
@@ -664,7 +641,7 @@ if st.session_state.legs or (selected_strategy != "None"):
             (max_expiry - payoff_date).days
         )
         for S in S_range
-    ])
+    ], dtype=np.float64)
 
     # Combine custom legs
     if st.session_state.legs:
@@ -699,11 +676,7 @@ if st.session_state.legs or (selected_strategy != "None"):
 
     # === LOCK ONLY normal and today's break-evens ===
     # Use session_state caching for these locked BE points so they don't move
-    # if "locked_be_today" not in st.session_state:
-    #     st.session_state.locked_be_today = compute_break_even_points(S_range, payoff_today)
-    # if "locked_be_normal" not in st.session_state:
-    #     st.session_state.locked_be_normal = compute_normal_break_even(S_range, payoff_selected)
-    
+
 
     
     be_today = compute_break_even_points(S_range, payoff_today)
@@ -742,9 +715,7 @@ if st.session_state.legs or (selected_strategy != "None"):
                 name=f"Leg {i+1} ({leg['position']} {leg['type']})",
                 line=dict(dash='dot', color=color)
             ))
-    st.write("Max Expiry:", max(leg['expiration'] for leg in legs_combined))
-    st.write("DTE Used for Normal BE:", (max(leg['expiration'] for leg in legs_combined) - datetime.date.today()).days)
-    st.write("Normal Break-evens:", normal_bes)
+
     # Plot preset strategy payoff
     for i, (name, payoff) in enumerate(strategy_payoffs.items()):
         if name == "Custom Legs":
