@@ -9,6 +9,11 @@ import plotly.graph_objects as go
 import math
 from collections import defaultdict
 
+st.set_page_config(
+    page_title="Strategy Builder",
+    page_icon="📊",
+    layout="wide"
+)
 
 # Greeks helper functions
 def d1(S, K, T, r, sigma):
