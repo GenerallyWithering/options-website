@@ -15,6 +15,9 @@ st.set_page_config(
     layout="wide"
 )
 
+if 'leg_visibility' not in st.session_state:
+    st.session_state.leg_visibility = []
+
 # Greeks helper functions
 def d1(S, K, T, r, sigma):
     return (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
